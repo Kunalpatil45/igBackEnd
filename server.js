@@ -36,7 +36,7 @@ app.use(fileUpload({
 // A list of all URLs that are allowed to make requests to your API
 const allowedOrigins = [
   "http://localhost:3000",
-  "YOUR_FUTURE_FRONTEND_URL" // You will get this URL after you deploy your frontend
+  "https://kunalpatilinsta.netlify.app" // You will get this URL after you deploy your frontend
 ];
 
 app.use(cors({
