@@ -2,7 +2,7 @@ const express = require('express');
 require("dotenv").config();
 const bodyParser = require('body-parser');
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const cors = require('cors');
 const User = require('./models/create');
 const Post = require('./models/post');
@@ -33,8 +33,23 @@ app.use(fileUpload({
 
 
 
+// A list of all URLs that are allowed to make requests to your API
+const allowedOrigins = [
+  "http://localhost:3000",
+  "YOUR_FUTURE_FRONTEND_URL" // You will get this URL after you deploy your frontend
+];
+
 app.use(cors({
-  origin: "http://localhost:3000", 
+  origin: function (origin, callback) {
+    // allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true, 
   methods: ["GET", "POST", "PUT", "DELETE"], 
   allowedHeaders: ["Content-Type", "Authorization"], 
