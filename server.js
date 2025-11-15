@@ -292,7 +292,7 @@ app.post("/forgot-password", async (req, res) => {
       from: "kp121005@gmail.com",
       to: emailInput,
       subject: "Password Reset OTP",
-      text: `Your OTP is ${otp}. It expires in 5 minutes.`,
+      text: `Your OTP For Kunalpatilinsta is ${otp}. It expires in 5 minutes.`,
     });
 
     res.json({ success: true, message: "OTP sent to email" });
@@ -329,6 +329,8 @@ app.post("/verify-otp", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+
 
 
 
@@ -412,45 +414,115 @@ app.get("/searchUser/:userId", async (req, res) => {
 
 app.post("/createPost", async (req, res) => {
   try {
-    console.log("📩 Received Post Request:", req.body);
-
     const { userId, text } = req.body;
+
     if (!userId) return res.status(400).json({ error: "User ID is required" });
     if (!text) return res.status(400).json({ error: "Post text is required" });
-    if (!req.files || !req.files.image) return res.status(400).json({ error: "Image file is required" });
 
-    
-    const user = await User.findOne({ userId }); 
+    if (!req.files || !req.files.media) {
+      return res.status(400).json({ error: "Media file is required" });
+    }
+
+    const mediaFile = req.files.media;
+
+    // Detect type
+    let mediaType = "";
+    if (mediaFile.mimetype.startsWith("image")) {
+      mediaType = "image";
+    } else if (mediaFile.mimetype.startsWith("video")) {
+      mediaType = "video";
+    } else {
+      return res.status(400).json({ error: "Only images & videos allowed" });
+    }
+
+    // Upload to Cloudinary
+    const uploadResult = await cloudinary.uploader.upload(
+      mediaFile.tempFilePath,
+      {
+        folder: "posts",
+        resource_type: "auto", // IMPORTANT
+      }
+    );
+
+    const mediaUrl = uploadResult.secure_url;
+
+    const user = await User.findOne({ userId });
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    
-    const result = await cloudinary.uploader.upload(req.files.image.tempFilePath, {
-      folder: "posts",
-      use_filename: true,
-    });
-
-    console.log("☁️ Cloudinary Upload Success:", result);
-    const imageUrl = result.secure_url;
-
-    
+    // Save post
     const newPost = new Post({
-      userId: user._id, 
+      userId: user._id,
       text,
-      image: imageUrl,
+      media: mediaUrl,
+      mediaType,
     });
 
     const savedPost = await newPost.save();
-    console.log("✅ Post Created Successfully:", savedPost);
 
-  
-    await User.findByIdAndUpdate(user._id, { $push: { posts: savedPost._id } });
+    await User.findByIdAndUpdate(user._id, {
+      $push: { posts: savedPost._id },
+    });
 
     res.status(201).json(savedPost);
+
   } catch (err) {
     console.error("❌ Post Creation Error:", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+
+// Run once to update old posts
+app.get("/fix-old-posts", async (req, res) => {
+  try {
+    const posts = await Post.find({ media: { $exists: false } });
+
+    for (let p of posts) {
+      if (p.image) {
+        p.media = p.image;
+        p.mediaType = "image";
+        await p.save();
+      }
+    }
+
+    res.json({ success: true, updated: posts.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error updating old posts" });
+  }
+});
+
+
+
+app.post("/like-post/:id", async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const postId = req.params.id;
+
+    const post = await Post.findById(postId);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+
+    const alreadyLiked = post.likedBy.includes(userId);
+
+    if (alreadyLiked) {
+      post.likes -= 1;
+      post.likedBy = post.likedBy.filter(id => id !== userId);
+    } else {
+      post.likes += 1;
+      post.likedBy.push(userId);
+    }
+
+    await post.save();
+    res.json({ likes: post.likes, liked: !alreadyLiked });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+
 
 app.get("/recent-users", async (req, res) => {
   try {
@@ -502,13 +574,21 @@ app.get("/user/:userId", async (req, res) => {
 app.get("/getUserPosts/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const posts = await Post.find({ userId }).sort({ createdAt: -1 });
+
+    // First find the user
+    const user = await User.findOne({ userId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Fetch posts using correct ObjectId
+    const posts = await Post.find({ userId: user._id }).sort({ createdAt: -1 });
+
     res.json(posts);
   } catch (error) {
     console.error("Error fetching posts:", error);
     res.status(500).json({ error: "Failed to fetch posts" });
   }
 });
+
 
 app.delete("/deletePost/:postId", async (req, res) => {
   try {
@@ -537,24 +617,28 @@ app.delete("/deletePost/:postId", async (req, res) => {
 
 
 
-app.get("/user/:id", async (req, res) => {
-  const userId = req.params.id;
-  console.log("Requested user ID:", userId);
-
+app.get("/user/:userId", async (req, res) => {
   try {
-      
-      const user = await User.findOne({ userId: userId });
+    const { userId } = req.params;
 
-      if (!user) {
-          return res.status(404).json({ error: "User not found" });
-      }
-      console.log(user);
-      res.json(user);
-  } catch (error) {
-      console.error("Profile Route Error:", error);
-      res.status(500).json({ error: "Internal server error" });
+    const user = await User.findOne({ userId })
+      .populate({
+        path: "posts",
+        select: "text media mediaType image createdAt"
+      });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.status(200).json(user);
+
+  } catch (err) {
+    console.error("User fetch error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
+
 
 
 
